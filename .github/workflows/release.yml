@@ -1,0 +1,68 @@
+name: Release
+
+# On a v* tag: test, `npm pack` every package and attach the tarballs to the
+# GitHub release, so consumers install by URL with no registry auth. npm
+# publish runs too, only when the NPM_TOKEN secret exists.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: The tag, the packages and the workflows' shipkit-ref agree
+        run: |
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const tag = process.env.TAG;
+            const files = ['package.json', 'packages/worker-push/package.json', 'packages/store-ship/package.json', 'packages/expo-shipkit-plugin/package.json'];
+            const bad = files.filter((f) => 'v' + JSON.parse(readFileSync(f, 'utf8')).version !== tag);
+            if (bad.length) { console.error('not ' + tag + ': ' + bad.join(', ')); process.exit(1); }"
+      - run: npm ci
+      - run: npm test
+
+      - name: Pack
+        run: |
+          mkdir -p dist
+          npm pack --workspaces --pack-destination dist
+          ls -l dist
+
+      - name: Attach the tarballs to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tgz --clobber
+          else
+            gh release create "$TAG" dist/*.tgz --title "$TAG" --generate-notes --verify-tag
+          fi
+          # Proof, not a claim: every tarball downloads, byte for byte, without auth.
+          for f in dist/*.tgz; do
+            url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename "$f")"
+            curl -fsSL "$url" -o "$RUNNER_TEMP/check.tgz"
+            cmp "$f" "$RUNNER_TEMP/check.tgz"
+            echo "$url"
+          done
+
+      # The @thetechnetwork scope must be claimed on npm first; until then the URLs above are the install path.
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspaces --access public

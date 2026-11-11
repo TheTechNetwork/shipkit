@@ -1,0 +1,43 @@
+{
+  "name": "@thetechnetwork/expo-shipkit-plugin",
+  "version": "0.1.0",
+  "description": "Expo config plugin: manual iOS signing and build numbers, and env-driven Android release signing, for shipkit's release workflows",
+  "license": "MIT",
+  "main": "app.plugin.js",
+  "files": [
+    "app.plugin.js",
+    "src/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "peerDependencies": {
+    "expo": ">=58"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@expo/config-plugins": "58.0.12",
+    "@expo/plist": "^0.10.1",
+    "xcode": "^4.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheTechNetwork/shipkit.git",
+    "directory": "packages/expo-shipkit-plugin"
+  },
+  "homepage": "https://github.com/TheTechNetwork/shipkit/tree/main/packages/expo-shipkit-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/TheTechNetwork/shipkit/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

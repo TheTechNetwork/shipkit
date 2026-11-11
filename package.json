@@ -1,0 +1,19 @@
+{
+  "name": "shipkit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reusable iOS/Android release workflows and Worker push for Fleetwright and friends",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/worker-push",
+    "packages/store-ship",
+    "packages/expo-shipkit-plugin"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "npm test --workspaces && node --test test/*.test.js"
+  }
+}

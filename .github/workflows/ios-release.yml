@@ -1,0 +1,480 @@
+name: iOS release
+
+# Archive, sign and upload an iOS app to App Store Connect, with manual signing.
+#
+# SIGNING CONTRACT (README, "iOS signing contract"). xcodebuild is given, for
+# every target: DEVELOPMENT_TEAM, CODE_SIGN_STYLE=Manual, CODE_SIGN_IDENTITY=
+# "Apple Distribution", CURRENT_PROJECT_VERSION and (if set) MARKETING_VERSION.
+# It is NEVER given PROVISIONING_PROFILE_SPECIFIER, because that would reach
+# every Pods target too. Instead it gets SHIPKIT_IOS_PROFILE_APP and one
+# SHIPKIT_IOS_PROFILE_<SUFFIX> per extension, and the project maps each to its
+# own target: XcodeGen with `PROVISIONING_PROFILE_SPECIFIER: $(SHIPKIT_IOS_PROFILE_APP)`,
+# Expo with @thetechnetwork/expo-shipkit-plugin. The same names (plus
+# SHIPKIT_TEAM_ID, SHIPKIT_BUILD_NUMBER, SHIPKIT_MARKETING_VERSION) are in the
+# environment before prepare-command runs, for `expo prebuild` to read.
+#
+# NEVER -allowProvisioningUpdates: with automatic signing a fresh runner mints
+# a distribution certificate per run until the team hits Apple's cap.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: macOS runner label
+        type: string
+        default: xcode-27
+      xcode-version:
+        description: 'Xcode to select, e.g. "27.2" (empty: the runner default)'
+        type: string
+        default: ''
+      node-version:
+        type: string
+        default: '24'
+      pnpm-version:
+        description: Install this pnpm globally before prepare-command (empty to skip)
+        type: string
+        default: ''
+      brew-packages:
+        description: 'Homebrew formulae to install first, e.g. "xcodegen"'
+        type: string
+        default: ''
+      app-directory:
+        description: Where prepare-command runs
+        type: string
+        default: '.'
+      prepare-command:
+        description: 'e.g. "xcodegen generate" or "npm ci && npx expo prebuild --platform ios --clean"'
+        type: string
+        default: ''
+      working-directory:
+        description: The directory holding the .xcodeproj or .xcworkspace
+        type: string
+        default: '.'
+      project:
+        description: Path to the .xcodeproj, relative to working-directory (this or workspace)
+        type: string
+        default: ''
+      workspace:
+        description: Path to the .xcworkspace, relative to working-directory (CocoaPods, Expo)
+        type: string
+        default: ''
+      scheme:
+        type: string
+        required: true
+      configuration:
+        type: string
+        default: Release
+      bundle-id:
+        description: The app's bundle id; the provisioning profile must be for it
+        type: string
+        required: true
+      team-id:
+        description: Apple team id (an input because a called workflow cannot read the caller's vars)
+        type: string
+        default: ''
+      extensions:
+        description: >-
+          JSON array of app extensions, each given an App Store profile through the
+          App Store Connect API: [{"bundle_id": "x.y.Push", "suffix": "PUSH",
+          "profile_name": "Y Push Profile", "bundle_name": "Y Push" (optional),
+          "variable": "MY_PUSH_PROFILE" (optional, default SHIPKIT_IOS_PROFILE_<suffix>),
+          "keychain_group": "x.y" (optional: fail unless the profile allows it)}]
+        type: string
+        default: '[]'
+      app-profile-variable:
+        description: The build setting that names the app target's profile
+        type: string
+        default: SHIPKIT_IOS_PROFILE_APP
+      marketing-version:
+        description: CFBundleShortVersionString override (empty keeps the project's)
+        type: string
+        default: ''
+      build-number:
+        description: CFBundleVersion (empty means github.run_number, which only increases)
+        type: string
+        default: ''
+      upload:
+        description: Upload to App Store Connect; false exports an .ipa as an artifact instead
+        type: boolean
+        default: true
+      simulator-test:
+        description: Run the unit tests on a simulator first, with no signing
+        type: boolean
+        default: false
+      simulator:
+        description: Regex for the preferred simulator name; any iPhone otherwise
+        type: string
+        default: '^iPhone'
+      shipkit-ref:
+        description: The shipkit ref whose tools and actions this run uses; keep it equal to the ref in `uses:`
+        type: string
+        default: v0.1.0
+    secrets:
+      ASC_KEY_ID:
+        required: false
+      ASC_ISSUER_ID:
+        required: false
+      ASC_KEY_P8:
+        description: The App Store Connect API key, raw .p8 PEM
+        required: false
+      APPLE_DIST_P12:
+        description: base64 of the Apple Distribution certificate and key (.p12 exported with -legacy)
+        required: false
+      APPLE_DIST_P12_PASSWORD:
+        required: false
+      APPLE_PROVISIONING_PROFILE:
+        description: base64 of the app's App Store .mobileprovision
+        required: false
+    outputs:
+      build-number:
+        description: The CFBundleVersion this run used
+        value: ${{ jobs.gate.outputs.build-number }}
+      archive-path:
+        description: The .xcarchive on the release runner (empty when skipped)
+        value: ${{ jobs.release.outputs.archive-path }}
+      uploaded:
+        description: '"true" when the build reached App Store Connect, "false" when skipped for want of credentials'
+        value: ${{ jobs.release.outputs.uploaded || 'false' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # On ubuntu, so a repository without Apple credentials never pays for a macOS runner.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      have: ${{ steps.check.outputs.have }}
+      build-number: ${{ steps.check.outputs.build-number }}
+    steps:
+      - name: Check the inputs, and that there are credentials to sign with
+        id: check
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          P12: ${{ secrets.APPLE_DIST_P12 }}
+          PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          TEAM_ID: ${{ inputs.team-id }}
+          PROJECT: ${{ inputs.project }}
+          WORKSPACE: ${{ inputs.workspace }}
+          EXTENSIONS: ${{ inputs.extensions }}
+          BUILD_NUMBER: ${{ inputs.build-number || github.run_number }}
+        run: |
+          set -euo pipefail
+          # Bad inputs are the caller's bug: fail, whatever the secrets.
+          if { [ -n "$PROJECT" ] && [ -n "$WORKSPACE" ]; } || { [ -z "$PROJECT" ] && [ -z "$WORKSPACE" ]; }; then
+            echo "::error::give exactly one of the project and workspace inputs"
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and all(.[]; (.bundle_id | type) == "string" and (.suffix | type) == "string" and (.profile_name | type) == "string")' <<<"$EXTENSIONS" >/dev/null; then
+            echo "::error::extensions must be a JSON array of {bundle_id, suffix, profile_name}"
+            exit 1
+          fi
+          if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::build-number must be one to three dot-separated integers, not '$BUILD_NUMBER'"
+            exit 1
+          fi
+          echo "build-number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+
+          # ALL OF THEM, or skip with a warning. Falling back to automatic signing
+          # is what mints certificates, so skipping costs a release and minting
+          # costs the ability to release at all.
+          missing=""
+          [ -n "$ASC_KEY_ID" ] || missing="$missing ASC_KEY_ID"
+          [ -n "$ASC_ISSUER_ID" ] || missing="$missing ASC_ISSUER_ID"
+          [ -n "$ASC_KEY_P8" ] || missing="$missing ASC_KEY_P8"
+          [ -n "$P12" ] || missing="$missing APPLE_DIST_P12"
+          [ -n "$PROFILE" ] || missing="$missing APPLE_PROVISIONING_PROFILE"
+          [ -n "$TEAM_ID" ] || missing="$missing team-id(an input)"
+          if [ -n "$missing" ]; then
+            echo "::warning::Not set:$missing — skipping the signed iOS build rather than signing automatically. See the shipkit README, Secrets."
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: gate
+    if: inputs.simulator-test
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: TheTechNetwork/shipkit
+          ref: ${{ inputs.shipkit-ref }}
+          path: .shipkit
+      - uses: ./.shipkit/actions/select-xcode
+        with:
+          version: ${{ inputs.xcode-version }}
+      - uses: ./.shipkit/actions/prepare
+        with:
+          node-version: ${{ inputs.node-version }}
+          pnpm-version: ${{ inputs.pnpm-version }}
+          brew-packages: ${{ inputs.brew-packages }}
+          directory: ${{ inputs.app-directory }}
+          command: ${{ inputs.prepare-command }}
+      - uses: ./.shipkit/actions/ios-simulator-test
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          project: ${{ inputs.project }}
+          workspace: ${{ inputs.workspace }}
+          scheme: ${{ inputs.scheme }}
+          prefer: ${{ inputs.simulator }}
+
+  release:
+    needs: [gate, test]
+    # always(), so a skipped test job does not skip this one; a failed one does.
+    if: >-
+      always() && needs.gate.outputs.have == 'true'
+      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      archive-path: ${{ steps.archive.outputs.path }}
+      uploaded: ${{ steps.export.outputs.uploaded }}
+    env:
+      TEAM_ID: ${{ inputs.team-id }}
+      BUNDLE_ID: ${{ inputs.bundle-id }}
+      BUILD_NUMBER: ${{ needs.gate.outputs.build-number }}
+      MARKETING_VERSION: ${{ inputs.marketing-version }}
+      APP_PROFILE_VARIABLE: ${{ inputs.app-profile-variable }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: TheTechNetwork/shipkit
+          ref: ${{ inputs.shipkit-ref }}
+          path: .shipkit
+
+      - uses: ./.shipkit/actions/select-xcode
+        with:
+          version: ${{ inputs.xcode-version }}
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$ASC_KEY_P8" > ~/private_keys/AuthKey_"$ASC_KEY_ID".p8
+          # Build settings and export profiles accumulate in these as profiles are installed.
+          : > "$RUNNER_TEMP/shipkit-build-settings"
+          : > "$RUNNER_TEMP/shipkit-export-profiles"
+          {
+            echo "KEYCHAIN=$RUNNER_TEMP/shipkit-signing.keychain-db"
+            echo "SETTINGS=$RUNNER_TEMP/shipkit-build-settings"
+            echo "PROFILES=$RUNNER_TEMP/shipkit-export-profiles"
+            echo "SHIPKIT_TEAM_ID=$TEAM_ID"
+            echo "SHIPKIT_BUILD_NUMBER=$BUILD_NUMBER"
+            [ -z "$MARKETING_VERSION" ] || echo "SHIPKIT_MARKETING_VERSION=$MARKETING_VERSION"
+          } >> "$GITHUB_ENV"
+
+      # Installed, never requested: requesting one is what drags in automatic signing.
+      # The NAME is read out of the profile, so the portal and the workflow cannot disagree.
+      - name: Install the app's provisioning profile
+        env:
+          PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          printf '%s' "$PROFILE" | base64 -d > "$RUNNER_TEMP/app.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/app.mobileprovision" > "$RUNNER_TEMP/app.plist"
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/app.plist")
+          NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/app.plist")
+          APPID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/app.plist")
+          EXPIRES=$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$RUNNER_TEMP/app.plist")
+          # An expired profile reads as an identity error; the date explains it in one line.
+          echo "profile: $NAME ($UUID)"
+          echo "app id:  $APPID"
+          echo "expires: $EXPIRES"
+          if [ "${APPID#*.}" != "$BUNDLE_ID" ]; then
+            echo "::error::APPLE_PROVISIONING_PROFILE is for $APPID, not $BUNDLE_ID"
+            exit 1
+          fi
+          cp "$RUNNER_TEMP/app.mobileprovision" ~/Library/MobileDevice/Provisioning\ Profiles/"$UUID".mobileprovision
+          echo "$APP_PROFILE_VARIABLE=$NAME" >> "$SETTINGS"
+          printf '%s\t%s\n' "$BUNDLE_ID" "$NAME" >> "$PROFILES"
+          echo "$APP_PROFILE_VARIABLE=$NAME" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/app.plist"
+
+      - name: Import the signing certificate
+        env:
+          P12: ${{ secrets.APPLE_DIST_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # A throwaway keychain on a throwaway machine: the password only has to exist.
+          security create-keychain -p ci "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p ci "$KEYCHAIN"
+          printf '%s' "$P12" | base64 -d > "$RUNNER_TEMP/dist.p12"
+          # Only codesign and security may use the key, rather than -A for everything.
+          if ! security import "$RUNNER_TEMP/dist.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" \
+               -T /usr/bin/codesign -T /usr/bin/security 2>"$RUNNER_TEMP/import.err"; then
+            cat "$RUNNER_TEMP/import.err"
+            # macOS cannot read OpenSSL 3's default PKCS#12 and calls it a wrong password.
+            if grep -qi 'MAC verification failed' "$RUNNER_TEMP/import.err"; then
+              echo "::error::Most likely the .p12 was exported with OpenSSL 3 defaults, which macOS cannot read."
+              echo "Re-export the SAME key and certificate with -legacy, and check it says MAC: sha1:"
+              echo "  openssl pkcs12 -export -legacy -inkey distribution.key -in distribution.pem -out distribution.p12"
+              echo "If it already says sha1, check APPLE_DIST_P12_PASSWORD for a trailing newline."
+            fi
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/dist.p12"
+          # Without this codesign waits on a GUI prompt nobody can answer.
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KEYCHAIN" >/dev/null
+          # Prepended: the system keychain still has to be searched for Apple's roots.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          echo "imported $(security find-identity -v -p codesigning "$KEYCHAIN" | grep -c 'Apple Distribution' || true) distribution identity"
+
+      # Fetched through the API rather than pasted: each extension is a bundle id
+      # of its own and needs its own profile. The key needs Admin, or App Manager
+      # with Certificates, Identifiers & Profiles access; a Developer key gets 403.
+      - name: Ensure each extension has a profile
+        if: inputs.extensions != '[]' && inputs.extensions != ''
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          EXTENSIONS: ${{ inputs.extensions }}
+        run: |
+          set -euo pipefail
+          # The serial of the identity just imported, so the profile names the cert that will sign.
+          CERT_SERIAL=$(security find-certificate -c "Apple Distribution" -p "$KEYCHAIN" 2>/dev/null \
+            | openssl x509 -noout -serial 2>/dev/null | sed 's/^serial=//' || true)
+          export CERT_SERIAL
+          echo "signing certificate serial: ${CERT_SERIAL:-unknown}"
+          count=$(jq length <<<"$EXTENSIONS")
+          for i in $(seq 0 $((count - 1))); do
+            ext=$(jq -c ".[$i]" <<<"$EXTENSIONS")
+            BUNDLE=$(jq -r .bundle_id <<<"$ext")
+            SUFFIX=$(jq -r '.suffix | ascii_upcase | gsub("[^A-Z0-9]+"; "_")' <<<"$ext")
+            VARIABLE=$(jq -r --arg d "SHIPKIT_IOS_PROFILE_$SUFFIX" '.variable // $d' <<<"$ext")
+            GROUP=$(jq -r '.keychain_group // ""' <<<"$ext")
+            OUT="$RUNNER_TEMP/ext-$i.mobileprovision"
+            BUNDLE_ID="$BUNDLE" \
+            BUNDLE_NAME=$(jq -r '.bundle_name // ""' <<<"$ext") \
+            PROFILE_NAME=$(jq -r .profile_name <<<"$ext") \
+            OUT="$OUT" \
+              node .shipkit/packages/store-ship/bin/store-ship.mjs ensure-ios-extension-profile
+
+            security cms -D -i "$OUT" > "$RUNNER_TEMP/ext.plist"
+            UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/ext.plist")
+            NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/ext.plist")
+            if [ -n "$GROUP" ]; then
+              # An extension sharing the app's keychain fails silently at runtime
+              # if its profile does not allow the group; fail here instead.
+              python3 - "$RUNNER_TEMP/ext.plist" "$GROUP" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], "rb") as f:
+              groups = plistlib.load(f).get("Entitlements", {}).get("keychain-access-groups") or []
+          want = sys.argv[2]
+          ok = any(g in ("*", want) or g.endswith(".*") or g.endswith("." + want) for g in groups)
+          print("keychain-access-groups:", ", ".join(groups) or "(none)")
+          sys.exit(0 if ok else "this profile does not allow the keychain group " + want)
+          PY
+            fi
+            mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+            cp "$OUT" ~/Library/MobileDevice/Provisioning\ Profiles/"$UUID".mobileprovision
+            echo "$VARIABLE=$NAME" >> "$SETTINGS"
+            printf '%s\t%s\n' "$BUNDLE" "$NAME" >> "$PROFILES"
+            echo "$VARIABLE=$NAME" >> "$GITHUB_ENV"
+            rm -f "$RUNNER_TEMP/ext.plist"
+          done
+
+      - uses: ./.shipkit/actions/prepare
+        with:
+          node-version: ''
+          pnpm-version: ${{ inputs.pnpm-version }}
+          brew-packages: ${{ inputs.brew-packages }}
+          directory: ${{ inputs.app-directory }}
+          command: ${{ inputs.prepare-command }}
+
+      - name: Archive
+        id: archive
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          PROJECT: ${{ inputs.project }}
+          WORKSPACE: ${{ inputs.workspace }}
+          SCHEME: ${{ inputs.scheme }}
+          CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/shipkit.xcarchive"
+          args=(archive -scheme "$SCHEME" -configuration "$CONFIGURATION"
+                -destination 'generic/platform=iOS' -archivePath "$ARCHIVE")
+          if [ -n "$WORKSPACE" ]; then args+=(-workspace "$WORKSPACE"); else args+=(-project "$PROJECT"); fi
+          # Global settings are safe for Pods; the profile is not, so it travels as variables.
+          args+=(DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Distribution"
+                 CURRENT_PROJECT_VERSION="$BUILD_NUMBER" SHIPKIT_TEAM_ID="$TEAM_ID" SHIPKIT_BUILD_NUMBER="$BUILD_NUMBER")
+          [ -z "$MARKETING_VERSION" ] || args+=(MARKETING_VERSION="$MARKETING_VERSION")
+          while IFS= read -r setting; do [ -z "$setting" ] || args+=("$setting"); done < "$SETTINGS"
+          echo "xcodebuild ${args[*]}"
+          if command -v xcbeautify >/dev/null; then
+            xcodebuild "${args[@]}" | xcbeautify
+          else
+            xcodebuild "${args[@]}"
+          fi
+          echo "path=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Export and upload
+        id: export
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          set -euo pipefail
+          # signingStyle manual and a profile per bundle id: without them the export
+          # re-decides the signing, and re-deciding is what asks Apple for certificates.
+          destination="export"
+          [ "$UPLOAD" = "true" ] && destination="upload"
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+            echo '<plist version="1.0"><dict>'
+            echo '  <key>method</key><string>app-store-connect</string>'
+            echo "  <key>destination</key><string>$destination</string>"
+            echo "  <key>teamID</key><string>$TEAM_ID</string>"
+            echo '  <key>uploadSymbols</key><true/>'
+            echo '  <key>signingStyle</key><string>manual</string>'
+            echo '  <key>signingCertificate</key><string>Apple Distribution</string>'
+            echo '  <key>provisioningProfiles</key><dict>'
+            while IFS=$'\t' read -r bundle name; do
+              name=$(printf '%s' "$name" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+              echo "    <key>$bundle</key><string>$name</string>"
+            done < "$PROFILES"
+            echo '  </dict>'
+            echo '</dict></plist>'
+          } > "$RUNNER_TEMP/export.plist"
+          plutil -lint "$RUNNER_TEMP/export.plist"
+          # The API key authenticates the upload; it does not mint signing assets here.
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/shipkit.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" \
+            -authenticationKeyPath ~/private_keys/AuthKey_"$ASC_KEY_ID".p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          echo "uploaded=$UPLOAD" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !inputs.upload }}
+        with:
+          name: ios-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+
+      # always(): a failed run is exactly when a signing identity must not linger.
+      - name: Remove the signing keychain and API key
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/shipkit-signing.keychain-db" 2>/dev/null || true
+          rm -rf ~/private_keys

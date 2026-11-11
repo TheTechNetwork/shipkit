@@ -1,0 +1,41 @@
+{
+  "name": "@thetechnetwork/store-ship",
+  "version": "0.1.0",
+  "description": "Zero-dependency App Store Connect and Google Play release CLI: TestFlight, App Store review, Play tracks, provisioning profiles",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "store-ship": "bin/store-ship.mjs"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "app-store-connect",
+    "testflight",
+    "google-play",
+    "provisioning-profile",
+    "ci"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheTechNetwork/shipkit.git",
+    "directory": "packages/store-ship"
+  },
+  "homepage": "https://github.com/TheTechNetwork/shipkit/tree/main/packages/store-ship",
+  "bugs": "https://github.com/TheTechNetwork/shipkit/issues",
+  "publishConfig": {
+    "access": "public"
+  }
+}

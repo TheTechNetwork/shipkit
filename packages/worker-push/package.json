@@ -1,0 +1,41 @@
+{
+  "name": "@thetechnetwork/worker-push",
+  "version": "0.1.0",
+  "description": "Zero-dependency APNs, FCM and Web Push senders with sealed payloads, for Cloudflare Workers and Node 20+",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./jwt": "./src/jwt.js",
+    "./seal": "./src/seal.js",
+    "./webpush": "./src/webpush.js"
+  },
+  "main": "./src/index.js",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "apns",
+    "fcm",
+    "web-push",
+    "vapid",
+    "cloudflare-workers"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheTechNetwork/shipkit.git",
+    "directory": "packages/worker-push"
+  },
+  "homepage": "https://github.com/TheTechNetwork/shipkit/tree/main/packages/worker-push",
+  "bugs": "https://github.com/TheTechNetwork/shipkit/issues",
+  "publishConfig": {
+    "access": "public"
+  }
+}

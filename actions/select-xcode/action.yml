@@ -1,0 +1,28 @@
+name: Select Xcode
+description: Select an installed Xcode by version, and say which one is in use.
+inputs:
+  version:
+    description: 'e.g. "27.2"; empty keeps the runner default'
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        XCODE: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ -n "$XCODE" ]; then
+          app=""
+          for candidate in "/Applications/Xcode_${XCODE}.app" /Applications/Xcode_"${XCODE}".*.app /Applications/Xcode_"${XCODE}"_beta*.app; do
+            if [ -d "$candidate" ]; then app="$candidate"; break; fi
+          done
+          if [ -z "$app" ]; then
+            echo "::error::Xcode ${XCODE} is not on this runner image. Installed:"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 1
+          fi
+          sudo xcode-select -s "$app/Contents/Developer"
+        fi
+        # The SDK decides how the app draws, so the log says exactly which one built it.
+        echo "using $(xcode-select -p): $(xcodebuild -version | tr '\n' ' '), iOS SDK $(xcrun --sdk iphoneos --show-sdk-version)"

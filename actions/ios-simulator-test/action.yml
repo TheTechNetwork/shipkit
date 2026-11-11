@@ -1,0 +1,74 @@
+name: iOS simulator test
+description: >-
+  Run `xcodebuild test` on a simulator chosen at run time, unsigned, and fail
+  unless at least one test actually executed.
+inputs:
+  working-directory:
+    description: The directory holding the project or workspace
+    default: '.'
+  project:
+    description: Path to the .xcodeproj (this or workspace)
+    default: ''
+  workspace:
+    description: Path to the .xcworkspace (this or project)
+    default: ''
+  scheme:
+    description: The scheme whose test action runs
+    required: true
+  configuration:
+    default: Debug
+  prefer:
+    description: Regex for the preferred simulator name, e.g. "^iPhone Duo$"; any iPhone otherwise
+    default: '^iPhone'
+outputs:
+  udid:
+    description: The simulator the tests ran on
+    value: ${{ steps.test.outputs.udid }}
+  tests:
+    description: How many tests xcodebuild reported executing
+    value: ${{ steps.test.outputs.tests }}
+runs:
+  using: composite
+  steps:
+    - id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROJECT: ${{ inputs.project }}
+        WORKSPACE: ${{ inputs.workspace }}
+        SCHEME: ${{ inputs.scheme }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        PREFER: ${{ inputs.prefer }}
+      run: |
+        set -euo pipefail
+        # Chosen at run time: a hard-coded device name breaks whenever the image changes.
+        pick=$(xcrun simctl list devices available --json | jq -r --arg prefer "$PREFER" '
+          [ .devices | to_entries[] | select(.key | test("iOS")) | .value[] ] as $all
+          | ($all | map(select(.name | test($prefer)))) + ($all | map(select(.name | startswith("iPhone"))))
+          | first | if . then "\(.udid)\t\(.name)" else empty end')
+        if [ -z "$pick" ]; then
+          echo "::error::no iOS iPhone simulator is available on this runner"
+          xcrun simctl list devices available
+          exit 1
+        fi
+        udid=${pick%%$'\t'*}
+        echo "testing on ${pick#*$'\t'} ($udid)"
+        echo "udid=$udid" >> "$GITHUB_OUTPUT"
+        args=(test -scheme "$SCHEME" -configuration "$CONFIGURATION" -sdk iphonesimulator -destination "id=$udid" CODE_SIGNING_ALLOWED=NO)
+        if [ -n "$WORKSPACE" ]; then args+=(-workspace "$WORKSPACE"); elif [ -n "$PROJECT" ]; then args+=(-project "$PROJECT"); fi
+        log="$RUNNER_TEMP/xcodebuild-test.log"
+        # The raw log is kept: "Executed N tests" is xcodebuild's wording, not a formatter's.
+        if command -v xcbeautify >/dev/null; then
+          xcodebuild "${args[@]}" | tee "$log" | xcbeautify
+        else
+          xcodebuild "${args[@]}" | tee "$log"
+        fi
+        # `xcodebuild test` exits 0 on a bundle with no tests, so check something ran.
+        if ! grep -qE 'Executed [1-9][0-9]* tests?' "$log"; then
+          echo "::error::xcodebuild test reported no tests executed"
+          grep -E 'Executed .* test|Test Suite' "$log" | tail -20 || true
+          exit 1
+        fi
+        count=$(grep -oE 'Executed [0-9]+ tests?' "$log" | tail -1 | grep -oE '[0-9]+')
+        echo "tests=$count" >> "$GITHUB_OUTPUT"
+        echo "$count test(s) executed"

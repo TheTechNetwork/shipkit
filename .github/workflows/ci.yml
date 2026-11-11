@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # worker-push promises Node 20+; Workers are covered by using WebCrypto only.
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        # The project's own installer, pinned; shellcheck is already on the image.
+        run: bash <(curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
+      - name: Lint the workflows
+        run: |
+          shellcheck --version | head -2
+          ./actionlint -color
+
+  # What a consumer does: install the release tarballs with no registry auth.
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Pack every package
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          npm pack --workspaces --pack-destination "$RUNNER_TEMP/dist"
+      - name: Install the tarballs into an empty project and use them
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          mkdir consumer && cd consumer
+          npm init -y >/dev/null
+          npm install ../dist/*.tgz @expo/config-plugins@58.0.12
+          node --input-type=module -e "
+            const p = await import('@thetechnetwork/worker-push');
+            for (const f of ['apnsPusher','fcmPusher','webPusher','routingPusher','pusherFromEnv','sealTo','openWith','signJwtES256','signJwtRS256']) if (typeof p[f] !== 'function') throw new Error(f);
+            console.log('worker-push exports ok');"
+          npx store-ship --help
+          node -e "const plugin = require('@thetechnetwork/expo-shipkit-plugin'); if (typeof plugin !== 'function') throw new Error('plugin'); console.log('expo plugin loads')"
+
+  # The reusable workflows cannot be exercised for real without Apple and Google
+  # credentials. These call them with none and prove they skip with a warning.
+  smoke-ios:
+    uses: ./.github/workflows/ios-release.yml
+    with:
+      project: Demo.xcodeproj
+      scheme: Demo
+      bundle-id: com.example.demo
+      extensions: '[{"bundle_id": "com.example.demo.Push", "suffix": "PUSH", "profile_name": "Demo Push"}]'
+      simulator-test: false
+      shipkit-ref: ${{ github.sha }}
+
+  smoke-android:
+    uses: ./.github/workflows/android-release.yml
+    with:
+      publish: true
+      package-name: com.example.demo
+      attach-to-release: false
+      shipkit-ref: ${{ github.sha }}
+
+  smoke-assert:
+    needs: [smoke-ios, smoke-android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Without secrets, nothing was signed or shipped, and nothing failed
+        env:
+          UPLOADED: ${{ needs.smoke-ios.outputs.uploaded }}
+          IOS_BUILD: ${{ needs.smoke-ios.outputs.build-number }}
+          BUILT: ${{ needs.smoke-android.outputs.built }}
+          PUBLISHED: ${{ needs.smoke-android.outputs.published }}
+          VERSION_CODE: ${{ needs.smoke-android.outputs.version-code }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          echo "ios uploaded=$UPLOADED build=$IOS_BUILD; android built=$BUILT published=$PUBLISHED versionCode=$VERSION_CODE"
+          [ "$UPLOADED" = "false" ]
+          [ "$BUILT" = "false" ]
+          [ "$PUBLISHED" = "false" ]
+          [ "$IOS_BUILD" = "$RUN_NUMBER" ]
+          [ "$VERSION_CODE" = "$RUN_NUMBER" ]
