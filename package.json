@@ -1,6 +1,6 @@
 {
   "name": "shipkit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Reusable iOS/Android release workflows and Worker push for Fleetwright and friends",
   "license": "MIT",

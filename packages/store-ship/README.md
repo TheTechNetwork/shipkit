@@ -1,10 +1,10 @@
 # @thetechnetwork/store-ship
 
 App Store Connect and Google Play release commands, as a CLI and as functions.
-Zero dependencies; Node 20+.
+One dependency, [`@thetechnetwork/worker-push`](../worker-push) (for its JWT signer); Node 20+.
 
 ```sh
-npx -y https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-store-ship-0.1.0.tgz --help
+npx -y https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.1/thetechnetwork-store-ship-0.1.1.tgz --help
 ```
 
 ```

@@ -1,6 +1,6 @@
 // Google's JWT-bearer flow, shared by Play here and FCM in worker-push.
 
-import { signJwtRS256 } from './jwt.js';
+import { signJwtRS256 } from '@thetechnetwork/worker-push/jwt';
 
 /**
  * A service account as raw JSON or base64 of it.

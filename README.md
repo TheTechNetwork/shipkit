@@ -11,7 +11,7 @@ Fleetwright, Forked and any other app can share them.
 | [`.github/workflows/android-release.yml`](.github/workflows/android-release.yml) | Reusable workflow: signed APK and AAB, optionally attached to the GitHub release and published to a Play track. If credentials are missing it skips with a warning. |
 | [`actions/ios-simulator-test`](actions/ios-simulator-test/action.yml) | Composite action: picks a simulator at run time, runs `xcodebuild test`, and fails unless at least one test ran. |
 | [`@thetechnetwork/worker-push`](packages/worker-push) | APNs, FCM and Web Push senders for Cloudflare Workers and Node 20+, plus sealed payloads. No dependencies. |
-| [`@thetechnetwork/store-ship`](packages/store-ship) | `store-ship` CLI: TestFlight distribution, App Store submission, Play tracks and provisioning profiles. No dependencies. |
+| [`@thetechnetwork/store-ship`](packages/store-ship) | `store-ship` CLI: TestFlight distribution, App Store submission, Play tracks and provisioning profiles. Depends only on worker-push. |
 | [`@thetechnetwork/expo-shipkit-plugin`](packages/expo-shipkit-plugin) | Expo (SDK 58) config plugin that makes `expo prebuild` produce projects these workflows can sign and number. |
 
 ## Install
@@ -19,16 +19,16 @@ Fleetwright, Forked and any other app can share them.
 Each release attaches the packages as tarballs, so installing needs no registry login:
 
 ```sh
-npm i https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-worker-push-0.1.0.tgz
-npm i -D https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-store-ship-0.1.0.tgz
-npm i -D https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-expo-shipkit-plugin-0.1.0.tgz
+npm i https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.1/thetechnetwork-worker-push-0.1.1.tgz
+npm i -D https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.1/thetechnetwork-store-ship-0.1.1.tgz
+npm i -D https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.1/thetechnetwork-expo-shipkit-plugin-0.1.1.tgz
 ```
 
 Once on npm (see "Publishing" below), install by name instead: `npm i @thetechnetwork/worker-push`.
 The release tarballs stay attached to every GitHub release as a no-registry fallback.
 
-The workflows are used as `TheTechNetwork/shipkit/.github/workflows/<file>@v0.1.0`.
-Each one also checks out shipkit at its `shipkit-ref` input (default `v0.1.0`) to
+The workflows are used as `TheTechNetwork/shipkit/.github/workflows/<file>@v0.1.1`.
+Each one also checks out shipkit at its `shipkit-ref` input (default `v0.1.1`) to
 get its helper actions and `store-ship`. Keep that ref the same as the one in `uses:`.
 
 ## iOS: `ios-release.yml`
@@ -38,7 +38,7 @@ Fleetwright (XcodeGen, two extensions):
 ```yaml
 jobs:
   ios:
-    uses: TheTechNetwork/shipkit/.github/workflows/ios-release.yml@v0.1.0
+    uses: TheTechNetwork/shipkit/.github/workflows/ios-release.yml@v0.1.1
     with:
       xcode-version: '27.2'
       brew-packages: xcodegen
@@ -65,7 +65,7 @@ Expo with CocoaPods (Forked):
 ```yaml
 jobs:
   ios:
-    uses: TheTechNetwork/shipkit/.github/workflows/ios-release.yml@v0.1.0
+    uses: TheTechNetwork/shipkit/.github/workflows/ios-release.yml@v0.1.1
     with:
       pnpm-version: '10.34.9'
       app-directory: apps/mobile
@@ -131,7 +131,7 @@ that `expo prebuild` can read them.
 ### Simulator tests only
 
 ```yaml
-- uses: TheTechNetwork/shipkit/actions/ios-simulator-test@v0.1.0
+- uses: TheTechNetwork/shipkit/actions/ios-simulator-test@v0.1.1
   with:
     working-directory: apps/ios
     project: Fleetwright.xcodeproj
@@ -150,7 +150,7 @@ bundle contains no tests.
 ```yaml
 jobs:
   android:
-    uses: TheTechNetwork/shipkit/.github/workflows/android-release.yml@v0.1.0
+    uses: TheTechNetwork/shipkit/.github/workflows/android-release.yml@v0.1.1
     permissions:
       contents: write   # only for attach-to-release
     with:
@@ -245,7 +245,7 @@ Distribution after an upload uses `store-ship` in a job of your own, on ubuntu:
     steps:
       - uses: actions/setup-node@v7.1.0
         with: { node-version: '24' }
-      - run: npx -y https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-store-ship-0.1.0.tgz testflight-distribute
+      - run: npx -y https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.1/thetechnetwork-store-ship-0.1.1.tgz testflight-distribute
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}

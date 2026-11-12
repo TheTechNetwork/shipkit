@@ -31,14 +31,8 @@ test('store-listing prints the parsed document', () => {
   assert.equal(JSON.parse(out).name, 'Example');
 });
 
-test('the JWT signer is the same file worker-push ships', () => {
-  // Vendored so the tarball needs no registry; this keeps the copy honest.
-  const here = readFileSync(new URL('../src/jwt.js', import.meta.url), 'utf8');
-  const there = readFileSync(new URL('../../worker-push/src/jwt.js', import.meta.url), 'utf8');
-  assert.equal(here, there, 'packages/store-ship/src/jwt.js drifted from worker-push: cp packages/worker-push/src/jwt.js packages/store-ship/src/jwt.js');
-});
-
-test('nothing here depends on anything', () => {
+test('the only dependency is worker-push, whose JWT signer it uses', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.dependencies, undefined);
+  assert.deepEqual(Object.keys(pkg.dependencies), ['@thetechnetwork/worker-push']);
+  assert.equal(pkg.dependencies['@thetechnetwork/worker-push'], `^${pkg.version}`);
 });

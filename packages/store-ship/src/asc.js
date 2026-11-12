@@ -1,6 +1,6 @@
 // App Store Connect API: an ES256 token and a fetch that reads Apple's errors.
 
-import { signJwtES256 } from './jwt.js';
+import { signJwtES256 } from '@thetechnetwork/worker-push/jwt';
 
 export const ASC = 'https://api.appstoreconnect.apple.com';
 

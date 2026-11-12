@@ -108,7 +108,7 @@ on:
       shipkit-ref:
         description: The shipkit ref whose tools and actions this run uses; keep it equal to the ref in `uses:`
         type: string
-        default: v0.1.0
+        default: v0.1.1
     secrets:
       ASC_KEY_ID:
         required: false
@@ -254,6 +254,9 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: ${{ inputs.node-version }}
+      # store-ship imports its JWT signer from the worker-push workspace; this links it (no registry, no scripts).
+      - name: Link shipkit's store-ship to worker-push
+        run: npm ci --prefix .shipkit --workspace packages/store-ship --ignore-scripts --no-audit --no-fund
 
       - name: Install the App Store Connect API key
         env:

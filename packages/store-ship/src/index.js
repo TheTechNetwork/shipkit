@@ -6,4 +6,4 @@ export { recreate as recreateIosProfile, ensure as ensureIosExtensionProfile, se
 export { storeListing } from './store-listing.js';
 export { ascClient, appleErrors, reason } from './asc.js';
 export { googleAccessToken, serviceAccount } from './google.js';
-export { signJwtES256, signJwtRS256 } from './jwt.js';
+export { signJwtES256, signJwtRS256 } from '@thetechnetwork/worker-push/jwt';

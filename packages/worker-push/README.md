@@ -5,7 +5,7 @@ dependencies; WebCrypto and `fetch` only, so it runs unchanged in Cloudflare
 Workers and Node 20+.
 
 ```sh
-npm i https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-worker-push-0.1.0.tgz
+npm i https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.1/thetechnetwork-worker-push-0.1.1.tgz
 ```
 
 | Export | |

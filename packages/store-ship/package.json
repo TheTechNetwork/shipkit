@@ -1,6 +1,6 @@
 {
   "name": "@thetechnetwork/store-ship",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-dependency App Store Connect and Google Play release CLI: TestFlight, App Store review, Play tracks, provisioning profiles",
   "license": "MIT",
   "type": "module",
@@ -17,6 +17,9 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@thetechnetwork/worker-push": "^0.1.1"
   },
   "scripts": {
     "test": "node --test test/*.test.js"

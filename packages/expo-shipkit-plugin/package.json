@@ -1,6 +1,6 @@
 {
   "name": "@thetechnetwork/expo-shipkit-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Expo config plugin: manual iOS signing and build numbers, and env-driven Android release signing, for shipkit's release workflows",
   "license": "MIT",
   "main": "app.plugin.js",

@@ -4,7 +4,7 @@ An Expo config plugin (SDK 58) that makes `expo prebuild` produce native project
 shipkit's `ios-release.yml` and `android-release.yml` can sign and number.
 
 ```sh
-npm i https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-expo-shipkit-plugin-0.1.0.tgz
+npm i https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.1/thetechnetwork-expo-shipkit-plugin-0.1.1.tgz
 ```
 
 ```json
