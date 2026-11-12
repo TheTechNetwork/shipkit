@@ -22,4 +22,5 @@ android {
         keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
         keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
     }
+    buildTypes.getByName("release").signingConfig = signingConfigs.findByName("release")
 }

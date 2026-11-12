@@ -165,7 +165,7 @@ jobs:
           echo "outcome: $OUTCOME"
           grep -E 'Executed .* tests?|TEST (SUCCEEDED|FAILED)' "$log" | tail -5
           [ "$OUTCOME" = failure ]
-          # The right reason: xcodebuild itself succeeded and ran nothing.
+          # The right reason: xcodebuild itself succeeded, having run nothing.
           grep -q '\*\* TEST SUCCEEDED \*\*' "$log"
           ! grep -qE 'Executed [1-9][0-9]* tests?' "$log"
       - id: tests

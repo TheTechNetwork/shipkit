@@ -23,7 +23,8 @@ if ! certs=$("$tools/apksigner" verify --print-certs "$apk"); then
   echo "::error::$apk does not verify: it is unsigned or badly signed"; exit 1
 fi
 echo "$certs"
-got=$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-f]+)$/\1/p' <<<"$certs")
+# "Signer #1 certificate …" or, with only one scheme, "V2 Signer: certificate …".
+got=$(sed -nE 's/^(Signer #1|V[0-9]+ Signer:) certificate SHA-256 digest: ([0-9a-f]+)$/\2/p' <<<"$certs" | head -1)
 [ "$got" = "$want_sha" ] || { echo "::error::$apk is signed by $got, not the keystore given (${want_sha})"; exit 1; }
 
 # The bundle is what Play receives; jar signing, so keytool reads it.

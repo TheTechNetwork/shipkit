@@ -83,8 +83,9 @@ Inputs: `runner` (default `xcode-27`), `xcode-version`, `node-version` (24),
 `working-directory`, `project` **or** `workspace`, `scheme`, `configuration`
 (Release), `bundle-id`, `team-id`, `extensions` (JSON, see the workflow),
 `app-profile-variable`, `marketing-version`, `build-number` (default the run
-number), `upload` (true; false exports an `.ipa` artifact instead),
-`simulator-test`, `simulator` (name regex), `shipkit-ref`.
+number), `upload` (true; false exports an `.ipa` artifact instead), `sign`
+(true; see below), `artifact-prefix` (`ios`: artifacts are `<prefix>-ipa` and
+`<prefix>-xcarchive`), `simulator-test`, `simulator` (name regex), `shipkit-ref`.
 Outputs: `build-number`, `archive-path`, `uploaded`.
 
 **The gate.** A cheap ubuntu job checks for `ASC_KEY_ID`, `ASC_ISSUER_ID`,
@@ -93,6 +94,14 @@ input. If any of them is missing, it prints a warning that names them, never
 starts a macOS runner, and sets `uploaded` to `false`. It never falls back to
 automatic signing. With automatic signing, a fresh runner mints a distribution
 certificate on every run until Apple's per-team cap is reached.
+
+**Unsigned.** `sign: false` needs no credentials and never uploads. It runs
+`prepare-command` with `SHIPKIT_BUILD_NUMBER` (and `SHIPKIT_MARKETING_VERSION`)
+set, archives Release with `CODE_SIGNING_ALLOWED=NO` and the same build number
+and version, and keeps the `.xcarchive` as the `<prefix>-xcarchive` artifact.
+Use it where there are no secrets, such as a pull request from a fork, to prove
+that Release still builds. It is a separate mode, not a fallback: with `sign`
+true, missing credentials still skip.
 
 ### iOS signing contract
 
@@ -141,9 +150,9 @@ that `expo prebuild` can read them.
 
 The simulator is chosen at run time: the first available one whose name matches
 `prefer`, otherwise any iPhone. The test runs unsigned
-(`CODE_SIGNING_ALLOWED=NO`). The action fails unless xcodebuild reports
-`Executed N tests` with N > 0, because `xcodebuild test` exits 0 even when the
-bundle contains no tests.
+(`CODE_SIGNING_ALLOWED=NO`). The action fails unless the result bundle counts at
+least one executed test, XCTest and Swift Testing alike, because `xcodebuild test`
+exits 0 even when the bundle contains no tests. Its `tests` output is that count.
 
 ## Android: `android-release.yml`
 
@@ -208,10 +217,12 @@ if (!keystore.isNullOrBlank()) signingConfigs.create("release") {
   keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
   keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
 }
+// Without this the release build is left unsigned (app-release-unsigned.apk).
+buildTypes.getByName("release").signingConfig = signingConfigs.findByName("release")
 ```
 
-After the build, the workflow runs `apksigner` on each APK and fails if it was
-signed with the debug key.
+After the build, the workflow checks each APK (`apksigner`) and bundle
+(`keytool`) and fails if it is unsigned or signed with the debug key.
 
 ## Secrets
 

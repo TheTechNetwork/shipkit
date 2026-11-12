@@ -223,17 +223,37 @@ jobs:
           aabs=("$MODULE"/build/outputs/bundle/release/*.aab)
           echo "APKs: ${apks[*]:-none}"
           echo "bundles: ${aabs[*]:-none}"
-          # A release that fell back to the debug key would install and then be refused by Play.
+          # Unsigned (a signingConfig declared but never given to buildTypes.release)
+          # or debug-signed: either installs nowhere useful and Play refuses it.
           tools=("${ANDROID_HOME:-/nonexistent}"/build-tools/*/apksigner)
           apksigner=""
           [ ${#tools[@]} -eq 0 ] || apksigner=${tools[${#tools[@]}-1]}
-          [ -n "$apksigner" ] || echo "::notice::apksigner not found; signer not checked"
+          [ -n "$apksigner" ] || echo "::notice::apksigner not found; APK signers not checked"
           for apk in "${apks[@]}"; do
             [ -n "$apksigner" ] || break
-            signer=$("$apksigner" verify --print-certs "$apk" 2>/dev/null | grep -m1 'certificate DN' || true)
-            echo "$apk: ${signer:-unverified}"
+            if ! certs=$("$apksigner" verify --print-certs "$apk" 2>&1); then
+              echo "$certs"
+              echo "::error::$apk is not signed; build.gradle declares a release signingConfig but buildTypes.release does not use it"
+              exit 1
+            fi
+            signer=$(grep -m1 'certificate DN' <<<"$certs" || true)
+            echo "$apk: $signer"
             if [[ "$signer" == *"CN=Android Debug"* ]]; then
               echo "::error::$apk is signed with the debug key; build.gradle is not reading ANDROID_KEYSTORE_FILE"
+              exit 1
+            fi
+          done
+          # A bundle is jar-signed; setup-java put keytool on the PATH.
+          for aab in "${aabs[@]}"; do
+            printed=$(keytool -printcert -jarfile "$aab" 2>&1 || true)
+            signer=$(grep -m1 'Owner:' <<<"$printed" || true)
+            echo "$aab: ${signer:-not signed}"
+            if [ -z "$signer" ]; then
+              echo "::error::$aab is not signed; buildTypes.release does not use the release signingConfig"
+              exit 1
+            fi
+            if [[ "$signer" == *"CN=Android Debug"* ]]; then
+              echo "::error::$aab is signed with the debug key; build.gradle is not reading ANDROID_KEYSTORE_FILE"
               exit 1
             fi
           done

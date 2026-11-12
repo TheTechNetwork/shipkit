@@ -15,6 +15,9 @@ name: iOS release
 #
 # NEVER -allowProvisioningUpdates: with automatic signing a fresh runner mints
 # a distribution certificate per run until the team hits Apple's cap.
+#
+# sign: false is the one way to build without credentials: CODE_SIGNING_ALLOWED=NO,
+# no upload, the .xcarchive kept as an artifact. integration.yml runs it.
 
 on:
   workflow_call:

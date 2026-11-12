@@ -16,7 +16,7 @@ if (!ios || !profile || !team || !build) throw new Error('usage: SHIPKIT_IOS_PRO
 
 /** @param {string} pbxproj */
 function load(pbxproj) {
-  const { objects, rootObject } = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', pbxproj], { encoding: 'utf8' }));
+  const { objects, rootObject } = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', pbxproj], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
   /** @param {string} listId @returns {Record<string, Record<string, string>>} */
   const configs = (listId) =>
     Object.fromEntries(objects[listId].buildConfigurations.map((/** @type {string} */ id) => [objects[id].name, objects[id].buildSettings]));
