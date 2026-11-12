@@ -61,22 +61,21 @@ jobs:
             echo "$url"
           done
 
-      # Trusted publishing (OIDC) is the normal path: no npm token exists anywhere.
-      # npm only lets a package add a trusted publisher once it exists, so the very first release
-      # uses a short-lived NPM_TOKEN; delete that secret after configuring each package.
-      - name: Publish to npm
+      # Trusted publishing (OIDC), stage-only: CI stages each version and a maintainer approves it with 2FA
+      # on npmjs.com (`npm stage approve`). No npm token is stored; NODE_AUTH_TOKEN is only a bootstrap fallback.
+      - name: Stage on npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -uo pipefail
-          npm install -g npm@^11.5.1 >/dev/null # trusted publishing needs npm 11.5.1+
+          npm install -g npm@latest >/dev/null # staged publishing needs npm 11.15+
           failed=0
           for dir in packages/*/; do
             name=$(node -p "require('./$dir/package.json').name"); version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then echo "$name@$version already on npm"; continue; fi
-            if npm publish "./$dir" --access public --provenance; then echo "published $name@$version"; continue; fi
+            if npm stage publish "./$dir" --access public --provenance; then echo "::notice::staged $name@$version: approve it on npmjs.com or with npm stage approve"; continue; fi
             if [ -z "$NODE_AUTH_TOKEN" ]; then
-              echo "::warning::$name not published. Add a trusted publisher on npmjs.com (repo TheTechNetwork/shipkit, workflow release.yml), or set NPM_TOKEN once for the first publish."
+              echo "::warning::$name not staged. Run: npm trust github $name --repo TheTechNetwork/shipkit --file release.yml --allow-stage-publish"
             else
               failed=1
             fi
