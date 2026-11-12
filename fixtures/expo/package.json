@@ -1,0 +1,13 @@
+{
+  "name": "shipkit-expo-fixture",
+  "version": "1.4.0",
+  "private": true,
+  "description": "The smallest Expo app that prebuilds with @thetechnetwork/expo-shipkit-plugin; built by integration.yml",
+  "main": "index.js",
+  "dependencies": {
+    "@thetechnetwork/expo-shipkit-plugin": "file:../../packages/expo-shipkit-plugin",
+    "expo": "~58.0.24",
+    "react": "19.3.0",
+    "react-native": "0.88.1"
+  }
+}

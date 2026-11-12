@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 
 import { pusherFromEnv } from '../src/index.js';
-import { recorder, serviceAccount } from './helpers.js';
+import { apnsKey, quiet, recorder, serviceAccount } from './helpers.js';
 
 const FW = { prefix: 'FLEETWRIGHT_' };
 
@@ -61,6 +61,34 @@ test('APNs without a bundle id is refused, unless the caller supplies a default'
   const b = recorder();
   pusherFromEnv(env, { logger: b.logger, defaultBundleId: 'network.thetech.fleetwright' });
   assert.match(b.lines.join('\n'), /APNs configured for network\.thetech\.fleetwright/);
+});
+
+test("APNs is Apple's production host unless APNS_SANDBOX=1, POST /3/device/<token>", async () => {
+  // A token from a TestFlight build is refused by the sandbox and the other way
+  // round (BadDeviceToken), and the sender then drops it as dead.
+  const { pem } = await apnsKey();
+  const real = globalThis.fetch;
+  /** @type {{ url: string, method: string }[]} */
+  const seen = [];
+  globalThis.fetch = /** @type {any} */ (async (/** @type {string} */ url, /** @type {any} */ init) => {
+    seen.push({ url: String(url), method: init.method });
+    return new Response('', { status: 200 });
+  });
+  try {
+    for (const [sandbox, host] of /** @type {const} */ ([
+      [undefined, 'api.push.apple.com'],
+      ['0', 'api.push.apple.com'],
+      ['1', 'api.sandbox.push.apple.com'],
+    ])) {
+      seen.length = 0;
+      const env = { PUSH: '1', APNS_KEY: pem, APNS_KEY_ID: 'K', APNS_TEAM_ID: 'T', APNS_BUNDLE_ID: 'b', APNS_SANDBOX: sandbox };
+      const r = await pusherFromEnv(env, { logger: quiet }).send([{ token: 'abc123', platform: 'ios' }], { title: 't', body: 'b' });
+      assert.equal(r.sent, 1, `APNS_SANDBOX=${sandbox}`);
+      assert.deepEqual(seen, [{ url: `https://${host}/3/device/abc123`, method: 'POST' }], `APNS_SANDBOX=${sandbox}`);
+    }
+  } finally {
+    globalThis.fetch = real;
+  }
 });
 
 test('a malformed service account falls back to logging rather than throwing', () => {

@@ -1,0 +1,5 @@
+self-hosted-runner:
+  # GitHub-hosted, but a preview image actionlint does not list yet
+  # (https://github.com/actions/runner-images, "Xcode 27"). ios-release.yml's default.
+  labels:
+    - xcode-27

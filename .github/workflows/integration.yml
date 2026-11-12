@@ -1,0 +1,296 @@
+name: Integration
+
+# The reusable workflows and actions/ios-simulator-test, run for real against
+# the apps in fixtures/, with no Apple or Google credentials:
+#
+# - android-release.yml builds signed, with a keystore made in this run, and
+#   the APK and bundle are checked from outside for the versionCode and signer.
+# - ios-release.yml runs its simulator test job and archives Release with
+#   sign: false; the archive is checked for the build number and version.
+# - actions/ios-simulator-test is run on a bundle with no tests (it must fail)
+#   and on one with an XCTest and a Swift Testing test (it must count both).
+#
+# Pull requests get the fast lane: the plain Gradle and XcodeGen fixtures.
+# The Expo fixture (npm, prebuild, CocoaPods, React Native) costs several times
+# that, so it runs on main, weekly and by hand. Signing for the App Store,
+# uploading and Play stay unexercised: they need real credentials.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # A keystore that exists for one run, so the signing path runs with no secrets.
+  keystore:
+    runs-on: ubuntu-latest
+    outputs:
+      keystore: ${{ steps.make.outputs.keystore }}
+      password: ${{ steps.make.outputs.password }}
+      alias: ${{ steps.make.outputs.alias }}
+      sha256: ${{ steps.make.outputs.sha256 }}
+    steps:
+      - id: make
+        env:
+          PASSWORD: throwaway-${{ github.run_id }}
+          ALIAS: shipkit-integration
+        run: |
+          set -euo pipefail
+          jks="$RUNNER_TEMP/throwaway.jks"
+          keytool -genkeypair -keystore "$jks" -storetype PKCS12 -storepass "$PASSWORD" -keypass "$PASSWORD" \
+            -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname "CN=shipkit integration $GITHUB_RUN_ID"
+          sha=$(keytool -exportcert -keystore "$jks" -storepass "$PASSWORD" -alias "$ALIAS" | sha256sum | cut -d' ' -f1)
+          echo "throwaway certificate SHA-256: $sha"
+          {
+            echo "keystore=$(base64 -w0 "$jks")"
+            echo "password=$PASSWORD"
+            echo "alias=$ALIAS"
+            echo "sha256=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+  android-gradle:
+    needs: keystore
+    uses: ./.github/workflows/android-release.yml
+    with:
+      working-directory: fixtures/android-gradle
+      sdk-packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+      node-version: ''
+      artifact-prefix: android-gradle
+      shipkit-ref: ${{ github.sha }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ needs.keystore.outputs.keystore }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ needs.keystore.outputs.password }}
+      ANDROID_KEY_ALIAS: ${{ needs.keystore.outputs.alias }}
+      ANDROID_KEY_PASSWORD: ${{ needs.keystore.outputs.password }}
+
+  android-expo:
+    if: github.event_name != 'pull_request' || true # TEMP: iterate on the Expo lane
+    needs: keystore
+    uses: ./.github/workflows/android-release.yml
+    with:
+      app-directory: fixtures/expo
+      prepare-command: npm ci --no-audit --no-fund && npx expo prebuild --platform android --no-install
+      working-directory: fixtures/expo/android
+      # One ABI: the signing and numbering are the same for four, at a quarter of the native build.
+      gradle-tasks: assembleRelease bundleRelease -PreactNativeArchitectures=arm64-v8a
+      artifact-prefix: android-expo
+      shipkit-ref: ${{ github.sha }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ needs.keystore.outputs.keystore }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ needs.keystore.outputs.password }}
+      ANDROID_KEY_ALIAS: ${{ needs.keystore.outputs.alias }}
+      ANDROID_KEY_PASSWORD: ${{ needs.keystore.outputs.password }}
+
+  android-verify:
+    needs: [keystore, android-gradle, android-expo]
+    # always(): android-expo is skipped on pull requests, and that must not skip this.
+    if: always() && needs.android-gradle.result == 'success' && needs.android-expo.result != 'failure' && needs.android-expo.result != 'cancelled'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [android-gradle, android-expo]
+    steps:
+      - name: Skip what did not run
+        id: ran
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          EXPO: ${{ needs.android-expo.result }}
+        run: |
+          if [ "$FIXTURE" = android-expo ] && [ "$EXPO" != success ]; then
+            echo "android-expo was $EXPO (it runs on main, weekly and by hand)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7.0.1
+        if: steps.ran.outputs.run == 'true'
+      - uses: actions/download-artifact@v8.0.2
+        if: steps.ran.outputs.run == 'true'
+        with:
+          pattern: ${{ matrix.fixture }}-release-*
+          path: ${{ runner.temp }}/built
+      - name: The workflow's outputs say it built, with the run number
+        if: steps.ran.outputs.run == 'true'
+        env:
+          BUILT: ${{ matrix.fixture == 'android-expo' && needs.android-expo.outputs.built || needs.android-gradle.outputs.built }}
+          VERSION_CODE: ${{ matrix.fixture == 'android-expo' && needs.android-expo.outputs.version-code || needs.android-gradle.outputs.version-code }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          echo "built=$BUILT version-code=$VERSION_CODE"
+          [ "$BUILT" = true ] && [ "$VERSION_CODE" = "$RUN_NUMBER" ]
+      - name: The APK and bundle carry that versionCode and the throwaway signer
+        if: steps.ran.outputs.run == 'true'
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          SHA256: ${{ needs.keystore.outputs.sha256 }}
+        run: fixtures/verify/android-build.sh "$RUNNER_TEMP/built" "$RUN_NUMBER" "$SHA256"
+
+  # The composite action on its own: its one promise is to fail when no test ran.
+  ios-simulator-test-action:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Generate the XcodeGen fixture
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        working-directory: fixtures/ios-xcodegen
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - id: empty
+        continue-on-error: true
+        uses: ./actions/ios-simulator-test
+        with:
+          working-directory: fixtures/ios-xcodegen
+          project: ShipkitFixture.xcodeproj
+          scheme: ShipkitFixtureNoTests
+      - name: A bundle with no tests failed the action, though xcodebuild passed it
+        env:
+          OUTCOME: ${{ steps.empty.outcome }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/xcodebuild-test.log"
+          echo "outcome: $OUTCOME"
+          grep -E 'Executed .* tests?|TEST (SUCCEEDED|FAILED)' "$log" | tail -5
+          [ "$OUTCOME" = failure ]
+          # The right reason: xcodebuild itself succeeded and ran nothing.
+          grep -q '\*\* TEST SUCCEEDED \*\*' "$log"
+          ! grep -qE 'Executed [1-9][0-9]* tests?' "$log"
+      - id: tests
+        uses: ./actions/ios-simulator-test
+        with:
+          working-directory: fixtures/ios-xcodegen
+          project: ShipkitFixture.xcodeproj
+          scheme: ShipkitFixture
+      - name: Both tests counted, the XCTest and the Swift Testing one
+        env:
+          TESTS: ${{ steps.tests.outputs.tests }}
+          UDID: ${{ steps.tests.outputs.udid }}
+        run: |
+          echo "tests=$TESTS on $UDID"
+          [ "$TESTS" = 2 ] && [ -n "$UDID" ]
+
+  ios-xcodegen:
+    uses: ./.github/workflows/ios-release.yml
+    with:
+      brew-packages: xcodegen
+      app-directory: fixtures/ios-xcodegen
+      prepare-command: xcodegen generate
+      working-directory: fixtures/ios-xcodegen
+      project: ShipkitFixture.xcodeproj
+      scheme: ShipkitFixture
+      bundle-id: network.thetech.shipkit.fixture
+      marketing-version: 0.2.0
+      simulator-test: true
+      sign: false
+      artifact-prefix: ios-xcodegen
+      shipkit-ref: ${{ github.sha }}
+
+  ios-expo:
+    if: github.event_name != 'pull_request' || true # TEMP: iterate on the Expo lane
+    uses: ./.github/workflows/ios-release.yml
+    with:
+      app-directory: fixtures/expo
+      prepare-command: npm ci --no-audit --no-fund && npx expo prebuild --platform ios
+      working-directory: fixtures/expo/ios
+      workspace: ShipkitFixture.xcworkspace
+      scheme: ShipkitFixture
+      bundle-id: network.thetech.shipkit.expofixture
+      marketing-version: 0.3.0
+      sign: false
+      artifact-prefix: ios-expo
+      shipkit-ref: ${{ github.sha }}
+
+  ios-verify:
+    needs: [ios-xcodegen, ios-expo]
+    if: always() && needs.ios-xcodegen.result == 'success' && needs.ios-expo.result != 'failure' && needs.ios-expo.result != 'cancelled'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: ios-xcodegen
+            bundle-id: network.thetech.shipkit.fixture
+            version: 0.2.0
+          - fixture: ios-expo
+            bundle-id: network.thetech.shipkit.expofixture
+            version: 0.3.0
+    steps:
+      - name: Skip what did not run
+        id: ran
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+          EXPO: ${{ needs.ios-expo.result }}
+        run: |
+          if [ "$FIXTURE" = ios-expo ] && [ "$EXPO" != success ]; then
+            echo "ios-expo was $EXPO (it runs on main, weekly and by hand)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7.0.1
+        if: steps.ran.outputs.run == 'true'
+      - uses: actions/download-artifact@v8.0.2
+        if: steps.ran.outputs.run == 'true'
+        with:
+          name: ${{ matrix.fixture }}-xcarchive
+          path: ${{ runner.temp }}/archive
+      - name: Unsigned means not uploaded, with the run number as the build
+        if: steps.ran.outputs.run == 'true'
+        env:
+          UPLOADED: ${{ matrix.fixture == 'ios-expo' && needs.ios-expo.outputs.uploaded || needs.ios-xcodegen.outputs.uploaded }}
+          BUILD: ${{ matrix.fixture == 'ios-expo' && needs.ios-expo.outputs.build-number || needs.ios-xcodegen.outputs.build-number }}
+          ARCHIVE: ${{ matrix.fixture == 'ios-expo' && needs.ios-expo.outputs.archive-path || needs.ios-xcodegen.outputs.archive-path }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          echo "uploaded=$UPLOADED build-number=$BUILD archive-path=$ARCHIVE"
+          [ "$UPLOADED" = false ] && [ "$BUILD" = "$RUN_NUMBER" ] && [ -n "$ARCHIVE" ]
+      - name: The archived app carries that build number and version, unsigned
+        if: steps.ran.outputs.run == 'true'
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          BUNDLE_ID: ${{ matrix.bundle-id }}
+          VERSION: ${{ matrix.version }}
+        run: python3 fixtures/verify/ios-archive.py "$RUNNER_TEMP/archive" ShipkitFixture "$BUNDLE_ID" "$RUN_NUMBER" "$VERSION"
+
+  # The plugin's iOS contract as a real prebuild leaves it, Pods included, with
+  # the variables ios-release.yml sets when it signs; then a simulator build.
+  expo-ios-prebuild:
+    if: github.event_name != 'pull_request' || true # TEMP: iterate on the Expo lane
+    runs-on: xcode-27
+    env:
+      SHIPKIT_IOS_PROFILE_APP: Shipkit Fixture App Store
+      SHIPKIT_TEAM_ID: ABCDE12345
+      SHIPKIT_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: fixtures/expo/package-lock.json
+      - name: Prebuild, with pods
+        working-directory: fixtures/expo
+        run: |
+          npm ci --no-audit --no-fund
+          npx expo prebuild --platform ios
+      - name: Only the app target is signed, and only Release bakes the profile
+        run: node fixtures/verify/expo-ios-project.mjs fixtures/expo/ios
+      - name: Build for the simulator
+        working-directory: fixtures/expo/ios
+        run: |
+          set -euo pipefail
+          xcodebuild build -workspace ShipkitFixture.xcworkspace -scheme ShipkitFixture -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO | tail -40

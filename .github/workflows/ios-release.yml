@@ -97,6 +97,18 @@ on:
         description: Upload to App Store Connect; false exports an .ipa as an artifact instead
         type: boolean
         default: true
+      sign:
+        description: >-
+          false archives Release with no signing at all (CODE_SIGNING_ALLOWED=NO), needs
+          no credentials, never uploads, and keeps the .xcarchive as an artifact: proof
+          that Release still builds where secrets are absent, such as a pull request
+          from a fork. Never a fallback: with sign true, missing credentials still skip
+        type: boolean
+        default: true
+      artifact-prefix:
+        description: Names the artifacts, <prefix>-ipa and <prefix>-xcarchive
+        type: string
+        default: ios
       simulator-test:
         description: Run the unit tests on a simulator first, with no signing
         type: boolean
@@ -133,7 +145,7 @@ on:
         description: The .xcarchive on the release runner (empty when skipped)
         value: ${{ jobs.release.outputs.archive-path }}
       uploaded:
-        description: '"true" when the build reached App Store Connect, "false" when skipped for want of credentials'
+        description: '"true" when the build reached App Store Connect, "false" when skipped for want of credentials or unsigned'
         value: ${{ jobs.release.outputs.uploaded || 'false' }}
 
 permissions:
@@ -160,6 +172,7 @@ jobs:
           WORKSPACE: ${{ inputs.workspace }}
           EXTENSIONS: ${{ inputs.extensions }}
           BUILD_NUMBER: ${{ inputs.build-number || github.run_number }}
+          SIGN: ${{ inputs.sign }}
         run: |
           set -euo pipefail
           # Bad inputs are the caller's bug: fail, whatever the secrets.
@@ -177,6 +190,11 @@ jobs:
           fi
           echo "build-number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
 
+          if [ "$SIGN" != "true" ]; then
+            echo "::notice::sign is false: archiving Release unsigned, with no credentials and no upload."
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # ALL OF THEM, or skip with a warning. Falling back to automatic signing
           # is what mints certificates, so skipping costs a release and minting
           # costs the ability to release at all.
@@ -227,7 +245,8 @@ jobs:
     needs: [gate, test]
     # always(), so a skipped test job does not skip this one; a failed one does.
     if: >-
-      always() && needs.gate.outputs.have == 'true'
+      always() && needs.gate.result == 'success'
+      && (needs.gate.outputs.have == 'true' || !inputs.sign)
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: ${{ inputs.runner }}
     outputs:
@@ -256,15 +275,12 @@ jobs:
           node-version: ${{ inputs.node-version }}
       # store-ship imports its JWT signer from the worker-push workspace; this links it (no registry, no scripts).
       - name: Link shipkit's store-ship to worker-push
+        if: inputs.sign
         run: npm ci --prefix .shipkit --workspace packages/store-ship --ignore-scripts --no-audit --no-fund
 
-      - name: Install the App Store Connect API key
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      # Signed or not, prepare-command (expo prebuild) reads the build number from here.
+      - name: Set the build settings prepare-command and xcodebuild read
         run: |
-          mkdir -p ~/private_keys
-          printf '%s' "$ASC_KEY_P8" > ~/private_keys/AuthKey_"$ASC_KEY_ID".p8
           # Build settings and export profiles accumulate in these as profiles are installed.
           : > "$RUNNER_TEMP/shipkit-build-settings"
           : > "$RUNNER_TEMP/shipkit-export-profiles"
@@ -277,9 +293,19 @@ jobs:
             [ -z "$MARKETING_VERSION" ] || echo "SHIPKIT_MARKETING_VERSION=$MARKETING_VERSION"
           } >> "$GITHUB_ENV"
 
+      - name: Install the App Store Connect API key
+        if: inputs.sign
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$ASC_KEY_P8" > ~/private_keys/AuthKey_"$ASC_KEY_ID".p8
+
       # Installed, never requested: requesting one is what drags in automatic signing.
       # The NAME is read out of the profile, so the portal and the workflow cannot disagree.
       - name: Install the app's provisioning profile
+        if: inputs.sign
         env:
           PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
         run: |
@@ -306,6 +332,7 @@ jobs:
           rm -f "$RUNNER_TEMP/app.plist"
 
       - name: Import the signing certificate
+        if: inputs.sign
         env:
           P12: ${{ secrets.APPLE_DIST_P12 }}
           P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
@@ -341,7 +368,7 @@ jobs:
       # of its own and needs its own profile. The key needs Admin, or App Manager
       # with Certificates, Identifiers & Profiles access; a Developer key gets 403.
       - name: Ensure each extension has a profile
-        if: inputs.extensions != '[]' && inputs.extensions != ''
+        if: inputs.sign && inputs.extensions != '[]' && inputs.extensions != ''
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -408,15 +435,21 @@ jobs:
           WORKSPACE: ${{ inputs.workspace }}
           SCHEME: ${{ inputs.scheme }}
           CONFIGURATION: ${{ inputs.configuration }}
+          SIGN: ${{ inputs.sign }}
         run: |
           set -euo pipefail
           ARCHIVE="$RUNNER_TEMP/shipkit.xcarchive"
           args=(archive -scheme "$SCHEME" -configuration "$CONFIGURATION"
                 -destination 'generic/platform=iOS' -archivePath "$ARCHIVE")
           if [ -n "$WORKSPACE" ]; then args+=(-workspace "$WORKSPACE"); else args+=(-project "$PROJECT"); fi
-          # Global settings are safe for Pods; the profile is not, so it travels as variables.
-          args+=(DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Distribution"
-                 CURRENT_PROJECT_VERSION="$BUILD_NUMBER" SHIPKIT_TEAM_ID="$TEAM_ID" SHIPKIT_BUILD_NUMBER="$BUILD_NUMBER")
+          args+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER" SHIPKIT_BUILD_NUMBER="$BUILD_NUMBER")
+          if [ "$SIGN" = "true" ]; then
+            # Global settings are safe for Pods; the profile is not, so it travels as variables.
+            args+=(DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Distribution"
+                   SHIPKIT_TEAM_ID="$TEAM_ID")
+          else
+            args+=(CODE_SIGNING_ALLOWED=NO)
+          fi
           [ -z "$MARKETING_VERSION" ] || args+=(MARKETING_VERSION="$MARKETING_VERSION")
           while IFS= read -r setting; do [ -z "$setting" ] || args+=("$setting"); done < "$SETTINGS"
           echo "xcodebuild ${args[*]}"
@@ -429,6 +462,7 @@ jobs:
 
       - name: Export and upload
         id: export
+        if: inputs.sign
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -469,10 +503,17 @@ jobs:
           echo "uploaded=$UPLOAD" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7.0.2
-        if: ${{ !inputs.upload }}
+        if: inputs.sign && !inputs.upload
         with:
-          name: ios-ipa
+          name: ${{ inputs.artifact-prefix }}-ipa
           path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !inputs.sign }}
+        with:
+          name: ${{ inputs.artifact-prefix }}-xcarchive
+          path: ${{ runner.temp }}/shipkit.xcarchive
           if-no-files-found: error
 
       # always(): a failed run is exactly when a signing identity must not linger.
