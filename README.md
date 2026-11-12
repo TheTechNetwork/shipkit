@@ -376,12 +376,12 @@ MIT © thetechnetwork
 
 ## Publishing
 
-Tags `v*` run `release.yml`: test, pack, attach tarballs to the GitHub release, then **stage** each new package version on npm with provenance. A maintainer approves each staged version with 2FA on npmjs.com (or `npm stage approve <id>`); only then is it installable.
+Tags `v*` run `release.yml`: test, pack, attach tarballs to the GitHub release, then `npm publish --provenance` for any package version npm doesn't have yet.
 
-CI authenticates with npm **trusted publishing** (GitHub OIDC) and may only stage, never publish directly. No npm token is stored. Setup, once per package, by a maintainer logged in to npm:
+CI authenticates with npm **trusted publishing** (GitHub OIDC): only this workflow can publish, and no npm token is stored. Setup, once per package, by a maintainer logged in to npm:
 
 ```sh
 for p in worker-push store-ship expo-shipkit-plugin; do
-  npm trust github @thetechnetwork/$p --repo TheTechNetwork/shipkit --file release.yml --allow-stage-publish
+  npm trust github @thetechnetwork/$p --repo TheTechNetwork/shipkit --file release.yml --allow-publish
 done
 ```
