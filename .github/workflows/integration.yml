@@ -74,7 +74,7 @@ jobs:
       ANDROID_KEY_PASSWORD: ${{ needs.keystore.outputs.password }}
 
   android-expo:
-    if: github.event_name != 'pull_request' || true # TEMP: iterate on the Expo lane
+    if: github.event_name != 'pull_request'
     needs: keystore
     uses: ./.github/workflows/android-release.yml
     with:
@@ -199,7 +199,7 @@ jobs:
       shipkit-ref: ${{ github.sha }}
 
   ios-expo:
-    if: github.event_name != 'pull_request' || true # TEMP: iterate on the Expo lane
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/ios-release.yml
     with:
       app-directory: fixtures/expo
@@ -268,7 +268,7 @@ jobs:
   # The plugin's iOS contract as a real prebuild leaves it, Pods included, with
   # the variables ios-release.yml sets when it signs; then a simulator build.
   expo-ios-prebuild:
-    if: github.event_name != 'pull_request' || true # TEMP: iterate on the Expo lane
+    if: github.event_name != 'pull_request'
     runs-on: xcode-27
     env:
       SHIPKIT_IOS_PROFILE_APP: Shipkit Fixture App Store
