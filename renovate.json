@@ -1,16 +1,28 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>TheTechNetwork/fleetwright-templates-repo"],
-  "description": ["Shared policy from the org preset; only shipkit's own facts below."],
+  "extends": [
+    "github>TheTechNetwork/Fleetwright-Templates"
+  ],
+  "description": [
+    "Shared policy from the org preset; only shipkit's own facts below.",
+    "shipkit is public, and Mend's hosted Renovate won't load a private repo's preset into a public repo, so this",
+    "extends the public template (TheTechNetwork/Fleetwright-Templates), identical to the private fleetwright-templates-repo."
+  ],
   "packageRules": [
     {
       "description": "shipkit publishes libraries: pinning their runtime dependencies would force exact copies on every consumer. Published dependency ranges are widened, not pinned; dev tooling stays pinned.",
-      "matchDepTypes": ["dependencies", "peerDependencies", "optionalDependencies"],
+      "matchDepTypes": [
+        "dependencies",
+        "peerDependencies",
+        "optionalDependencies"
+      ],
       "rangeStrategy": "widen"
     },
     {
       "description": "Packages released from this repo (store-ship depends on worker-push) move with the release workflow, not Renovate.",
-      "matchPackageNames": ["@thetechnetwork/**"],
+      "matchPackageNames": [
+        "@thetechnetwork/**"
+      ],
       "enabled": false
     }
   ]
