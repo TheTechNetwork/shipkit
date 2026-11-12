@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>TheTechNetwork/fleetwright-templates-repo"],
+  "extends": ["local>TheTechNetwork/fleetwright-templates-repo"],
   "description": ["Shared policy from the org preset; only shipkit's own facts below."],
   "packageRules": [
     {
