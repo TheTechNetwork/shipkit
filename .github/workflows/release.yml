@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # npm trusted publishing and provenance
 
 jobs:
   release:
@@ -60,9 +61,24 @@ jobs:
             echo "$url"
           done
 
-      # The @thetechnetwork scope must be claimed on npm first; until then the URLs above are the install path.
+      # Trusted publishing (OIDC) is the normal path: no npm token exists anywhere.
+      # npm only lets a package add a trusted publisher once it exists, so the very first release
+      # uses a short-lived NPM_TOKEN; delete that secret after configuring each package.
       - name: Publish to npm
-        if: env.NPM_TOKEN != ''
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --workspaces --access public
+        run: |
+          set -uo pipefail
+          npm install -g npm@^11.5.1 >/dev/null # trusted publishing needs npm 11.5.1+
+          failed=0
+          for dir in packages/*/; do
+            name=$(node -p "require('./$dir/package.json').name"); version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then echo "$name@$version already on npm"; continue; fi
+            if npm publish "./$dir" --access public --provenance; then echo "published $name@$version"; continue; fi
+            if [ -z "$NODE_AUTH_TOKEN" ]; then
+              echo "::warning::$name not published. Add a trusted publisher on npmjs.com (repo TheTechNetwork/shipkit, workflow release.yml), or set NPM_TOKEN once for the first publish."
+            else
+              failed=1
+            fi
+          done
+          exit $failed

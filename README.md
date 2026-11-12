@@ -24,10 +24,8 @@ npm i -D https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thet
 npm i -D https://github.com/TheTechNetwork/shipkit/releases/download/v0.1.0/thetechnetwork-expo-shipkit-plugin-0.1.0.tgz
 ```
 
-The packages are named for the `@thetechnetwork` npm scope, but **that scope has
-to be claimed on npmjs.com** before `npm i @thetechnetwork/...` can work. Until
-then, the release workflow's `npm publish` step does nothing (it only runs when
-an `NPM_TOKEN` secret exists), and the URLs above are the way to install.
+Once on npm (see "Publishing" below), install by name instead: `npm i @thetechnetwork/worker-push`.
+The release tarballs stay attached to every GitHub release as a no-registry fallback.
 
 The workflows are used as `TheTechNetwork/shipkit/.github/workflows/<file>@v0.1.0`.
 Each one also checks out shipkit at its `shipkit-ref` input (default `v0.1.0`) to
@@ -375,3 +373,14 @@ if the two files drift apart.
 ## License
 
 MIT © thetechnetwork
+
+## Publishing
+
+Tags `v*` run `release.yml`: test, pack, attach tarballs to the GitHub release, then `npm publish --provenance` for any package version npm doesn't have yet.
+
+Publishing uses npm **trusted publishing** (GitHub OIDC), so no npm token is stored. One-time setup:
+
+1. Create the npm org `thetechnetwork` (free for public packages).
+2. First publish only: add a granular `NPM_TOKEN` secret (publish rights on `@thetechnetwork`, short expiry) and re-run the latest release.
+3. On npmjs.com, for each of `@thetechnetwork/worker-push`, `store-ship`, `expo-shipkit-plugin`: Settings › Trusted publisher › GitHub Actions, repository `TheTechNetwork/shipkit`, workflow `release.yml`. Optionally set "Require two-factor and disallow tokens".
+4. Delete the `NPM_TOKEN` secret. Every later tag publishes through OIDC with provenance.
