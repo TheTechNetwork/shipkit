@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "ShipkitFixture",
+    "slug": "shipkit-fixture",
+    "version": "1.4.0",
+    "ios": {
+      "bundleIdentifier": "network.thetech.shipkit.expofixture",
+      "buildNumber": "1"
+    },
+    "android": {
+      "package": "network.thetech.shipkit.expofixture",
+      "versionCode": 1
+    },
+    "plugins": ["@thetechnetwork/expo-shipkit-plugin"]
+  }
+}

@@ -318,7 +318,7 @@ export function apnsPusher(config, { deliver, logger, now = () => Date.now(), se
             'apns-priority': '10',
             // Seconds since the epoch: Apple drops it rather than delivering it stale.
             'apns-expiration': String(Math.floor(now() / 1000) + PUSH_TTL_S),
-            ...(collapse ? { 'apns-collapse-id': String(collapse).slice(0, 64) } : {}),
+            ...(collapse ? { 'apns-collapse-id': await apnsCollapseId(collapse) } : {}),
           });
           if (res.status === 200) {
             sent++;
@@ -382,6 +382,23 @@ export function apnsPusher(config, { deliver, logger, now = () => Date.now(), se
       return { sent, dead };
     },
   };
+}
+
+/**
+ * Apple allows an apns-collapse-id of at most 64 bytes, and a header has to be
+ * bytes fetch will send. A short visible-ASCII key goes as it is; any other is
+ * replaced by its SHA-256 in hex (64 bytes), so it fits, and the same key still
+ * collapses with itself and with no other. Cutting it to 64 characters did
+ * neither: a multi-byte key overran the limit or made fetch throw, and two long
+ * keys with one prefix collapsed into each other.
+ *
+ * @param {string} key
+ */
+async function apnsCollapseId(key) {
+  const text = String(key);
+  if (/^[\x21-\x7e]{1,64}$/.test(text)) return text;
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**

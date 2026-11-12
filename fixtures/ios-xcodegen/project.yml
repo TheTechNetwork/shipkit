@@ -1,0 +1,56 @@
+# The smallest XcodeGen app shaped like Fleetwright: an app target that maps
+# its own profile variable (README, "iOS signing contract") and a hosted unit
+# test target. ShipkitFixtureNoTests is a test bundle with no tests in it, the
+# case actions/ios-simulator-test exists to fail on.
+name: ShipkitFixture
+options:
+  bundleIdPrefix: network.thetech.shipkit
+  deploymentTarget:
+    iOS: '17.0'
+settings:
+  base:
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+    SWIFT_VERSION: '6.0'
+targets:
+  ShipkitFixture:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: network.thetech.shipkit.fixture
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        PROVISIONING_PROFILE_SPECIFIER: $(SHIPKIT_IOS_PROFILE_APP)
+  ShipkitFixtureTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: ShipkitFixture
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  ShipkitFixtureNoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [NoTests]
+    dependencies:
+      - target: ShipkitFixture
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ShipkitFixture:
+    build:
+      targets:
+        ShipkitFixture: all
+    test:
+      targets: [ShipkitFixtureTests]
+  ShipkitFixtureNoTests:
+    build:
+      targets:
+        ShipkitFixture: all
+    test:
+      targets: [ShipkitFixtureNoTests]

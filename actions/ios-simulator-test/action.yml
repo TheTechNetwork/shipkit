@@ -54,21 +54,27 @@ runs:
         udid=${pick%%$'\t'*}
         echo "testing on ${pick#*$'\t'} ($udid)"
         echo "udid=$udid" >> "$GITHUB_OUTPUT"
-        args=(test -scheme "$SCHEME" -configuration "$CONFIGURATION" -sdk iphonesimulator -destination "id=$udid" CODE_SIGNING_ALLOWED=NO)
+        result="$RUNNER_TEMP/ios-simulator-test.xcresult"
+        rm -rf "$result"
+        args=(test -scheme "$SCHEME" -configuration "$CONFIGURATION" -sdk iphonesimulator -destination "id=$udid"
+              -resultBundlePath "$result" CODE_SIGNING_ALLOWED=NO)
         if [ -n "$WORKSPACE" ]; then args+=(-workspace "$WORKSPACE"); elif [ -n "$PROJECT" ]; then args+=(-project "$PROJECT"); fi
         log="$RUNNER_TEMP/xcodebuild-test.log"
-        # The raw log is kept: "Executed N tests" is xcodebuild's wording, not a formatter's.
+        # The raw log is kept for the failure message below.
         if command -v xcbeautify >/dev/null; then
           xcodebuild "${args[@]}" | tee "$log" | xcbeautify
         else
           xcodebuild "${args[@]}" | tee "$log"
         fi
         # `xcodebuild test` exits 0 on a bundle with no tests, so check something ran.
-        if ! grep -qE 'Executed [1-9][0-9]* tests?' "$log"; then
+        # Counted from the result bundle: the log's "Executed N tests" is XCTest's
+        # alone, and Swift Testing (Xcode's default for a new target) prints no such line.
+        count=$(xcrun xcresulttool get test-results summary --path "$result" --compact \
+          | jq '(.totalTestCount // 0) - (.skippedTests // 0)')
+        if ! [ "$count" -gt 0 ] 2>/dev/null; then
           echo "::error::xcodebuild test reported no tests executed"
-          grep -E 'Executed .* test|Test Suite' "$log" | tail -20 || true
+          grep -E 'Executed .* test|Test Suite|Test run' "$log" | tail -20 || true
           exit 1
         fi
-        count=$(grep -oE 'Executed [0-9]+ tests?' "$log" | tail -1 | grep -oE '[0-9]+')
         echo "tests=$count" >> "$GITHUB_OUTPUT"
         echo "$count test(s) executed"

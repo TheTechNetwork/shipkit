@@ -263,6 +263,31 @@ test('an APNs push expires, collapses when asked, and says when it was sent', as
   assert.equal(calls[0].payload.sentAt, '1700000000000');
 });
 
+test("apns-collapse-id is what Apple accepts: at most 64 bytes, and one key never collapses into another", async () => {
+  // Apple: "The value of this key must not exceed 64 bytes"; a header is bytes, not
+  // UTF-16 code units, and fetch refuses a header value outside Latin-1 outright.
+  const { pem } = await apnsKey();
+  /** @type {string[]} */
+  const ids = [];
+  const pusher = apnsPusher(
+    { keyId: 'K', teamId: 'T', bundleId: 'b', privateKey: pem },
+    { logger: quiet, deliver: async (_t, _p, headers) => (ids.push(headers['apns-collapse-id']), { status: 200, body: '' }) },
+  );
+  const long = 'session-'.repeat(8);
+  const keys = ['cc-brave-otter', 'Zoë & Sam — 🍕 match', `${long}a`, `${long}b`];
+  for (const collapseKey of keys) await pusher.send([{ token: 't', platform: 'ios' }], { title: 't', body: 'b', collapseKey });
+  assert.equal(ids.length, keys.length, 'every notification was handed to APNs');
+  assert.equal(ids[0], 'cc-brave-otter', 'a short ASCII key goes as it is');
+  for (const id of ids) {
+    assert.match(id, /^[\x21-\x7e]{1,64}$/, `${JSON.stringify(id)} is not 1-64 visible ASCII bytes`);
+  }
+  assert.equal(new Set(ids).size, keys.length, 'two keys sharing a 64-character prefix collapsed into one');
+  ids.length = 0;
+  await pusher.send([{ token: 't', platform: 'ios' }], { title: 't', body: 'b', collapseKey: keys[1] });
+  await pusher.send([{ token: 't', platform: 'ios' }], { title: 't', body: 'b', collapseKey: keys[1] });
+  assert.equal(ids[0], ids[1], 'the same key gives the same id, or nothing would collapse');
+});
+
 test('a notification with work behind it wakes the app on iOS, alongside the alert', async () => {
   const { pem } = await apnsKey();
   /** @type {any[]} */
