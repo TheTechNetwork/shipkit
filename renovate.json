@@ -1,6 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "extends": ["github>TheTechNetwork/fleetwright-templates-repo"],
+  "description": ["Shared policy from the org preset; only shipkit's own facts below."],
+  "packageRules": [
+    {
+      "description": "shipkit publishes libraries: pinning their runtime dependencies would force exact copies on every consumer. Published dependency ranges are widened, not pinned; dev tooling stays pinned.",
+      "matchDepTypes": ["dependencies", "peerDependencies", "optionalDependencies"],
+      "rangeStrategy": "widen"
+    },
+    {
+      "description": "Packages released from this repo (store-ship depends on worker-push) move with the release workflow, not Renovate.",
+      "matchPackageNames": ["@thetechnetwork/**"],
+      "enabled": false
+    }
   ]
 }
