@@ -25,8 +25,8 @@
   },
   "devDependencies": {
     "@expo/config-plugins": "58.0.12",
-    "@expo/plist": "^0.10.1",
-    "xcode": "^4.0.0"
+    "@expo/plist": "0.10.2",
+    "xcode": "4.0.0"
   },
   "repository": {
     "type": "git",
